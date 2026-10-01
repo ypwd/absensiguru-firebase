@@ -1110,9 +1110,19 @@ async function kirimAbsensi(
       };
     }
 
+    console.log('[ABSENSI DIAG] Mulai transaksi', {
+      statusAbsensi,
+      attendanceKey,
+      tanggal,
+      idGuru: safeIdGuru,
+      jamSekarang,
+      jarak: Math.round(jarak)
+    });
+
     const transactionResult = await FirebaseDirect.runTransaction(
       attendanceRef,
       current => {
+        console.log('[ABSENSI DIAG] Data current dari transaksi:', current);
         if (statusAbsensi === 'MASUK') {
           if (current === null) {
             return {
@@ -1164,8 +1174,11 @@ async function kirimAbsensi(
       }
     );
 
+    console.log('[ABSENSI DIAG] Hasil transaksi:', transactionResult);
+
     if (!transactionResult.committed) {
       const finalSnap = await FirebaseDirect.get(attendanceRef);
+      console.log('[ABSENSI DIAG] Data setelah transaksi:', finalSnap.exists() ? finalSnap.val() : null);
       const finalData = finalSnap.exists() ? (finalSnap.val() || {}) : null;
 
       if (statusAbsensi === 'MASUK') {
@@ -1210,8 +1223,8 @@ async function kirimAbsensi(
         return {
           success: false,
           message: finalData.jamMasuk
-            ? 'Data MASUK ditemukan, tetapi Firebase menolak pembaruan PULANG. Periksa izin write pada attendance.'
-            : 'Absensi PULANG tidak dapat diproses karena data MASUK belum lengkap.',
+            ? 'DIAGNOSIS PULANG: Transaksi Firebase tidak commit. Data MASUK ditemukan (' + finalData.jamMasuk + '), jamPulang masih kosong. Lihat Console browser untuk detail.'
+            : 'DIAGNOSIS PULANG: Data MASUK belum lengkap. Lihat Console browser untuk detail.',
           guru
         };
       }
@@ -1232,16 +1245,28 @@ async function kirimAbsensi(
     console.error('Kesalahan Firebase absensi:', error);
 
     const code = error && error.code ? error.code : '';
+    const name = error && error.name ? error.name : '';
+    const detail = error && error.message ? error.message : String(error);
+
+    console.error('[ABSENSI DIAG] Error detail:', {
+      code,
+      name,
+      message: detail,
+      statusAbsensi,
+      idGuru: safeIdGuru,
+      attendanceKey
+    });
+
     if (code === 'PERMISSION_DENIED') {
       return {
         success: false,
-        message: 'Akses Firebase ditolak. Profil terminal belum aktif atau Rules belum dipasang.'
+        message: 'DIAGNOSIS FIREBASE: PERMISSION_DENIED — ' + detail
       };
     }
 
     return {
       success: false,
-      message: 'Gagal memproses absensi: ' + (error.message || error)
+      message: 'DIAGNOSIS FIREBASE: ' + (code ? code + ' — ' : '') + detail
     };
   }
 }
