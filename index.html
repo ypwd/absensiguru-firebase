@@ -4,9 +4,42 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>Absensi Guru</title>
+  <title>Absensi Guru — Firebase Direct</title>
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import {
+    getAuth,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    setPersistence,
+    browserLocalPersistence
+  } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+  import {
+    getDatabase,
+    ref,
+    get,
+    set,
+    update,
+    runTransaction
+  } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+  window.FirebaseDirect = {
+    initializeApp,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    setPersistence,
+    browserLocalPersistence,
+    getAuth,
+    getDatabase,
+    ref,
+    get,
+    set,
+    update,
+    runTransaction
+  };
+</script>
 
   <style>
     * { box-sizing: border-box; }
@@ -146,6 +179,45 @@
       color: #991b1b;
     }
 
+    .auth-panel {
+      margin-bottom: 18px;
+      padding: 16px;
+      border: 1px solid #bfdbfe;
+      border-radius: 14px;
+      background: #eff6ff;
+    }
+
+    .auth-title {
+      font-size: 18px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .auth-help {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #475569;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+
+    .auth-panel input {
+      width: 100%;
+      padding: 12px;
+      margin: 5px 0;
+      border: 1px solid #cbd5e1;
+      border-radius: 9px;
+      font-size: 15px;
+    }
+
+    .auth-button {
+      width: 100%;
+      margin-top: 8px;
+      background: #2563eb;
+      color: #fff;
+    }
+
     /* =====================================================
        QR SCANNER SUPER SENSITIF
        ===================================================== */
@@ -186,24 +258,39 @@
 
   <h1>ABSENSI GURU</h1>
 
-  <div id="firebaseStatus" style="font-size:12px;text-align:center;color:#64748b;margin-bottom:10px">Firebase Direct</div>
   <div class="card">
 
-    <div class="modes">
-      <button id="masuk" class="mode active"
-              onclick="setMode('MASUK')">
-        MASUK
-      </button>
-
-      <button id="pulang" class="mode"
-              onclick="setMode('PULANG')">
-        PULANG
+    <div id="authPanel" class="auth-panel" style="display:none;">
+      <div class="auth-title">Aktivasi Terminal</div>
+      <div class="auth-help">
+        Masukkan akun Firebase Authentication terminal satu kali.
+        Setelah berhasil, sesi akan disimpan oleh browser.
+      </div>
+      <input id="authEmail" type="email" autocomplete="username"
+             placeholder="Email Firebase">
+      <input id="authPassword" type="password" autocomplete="current-password"
+             placeholder="Password Firebase">
+      <button id="btnAuth" class="auth-button" onclick="loginTerminal()">
+        AKTIFKAN TERMINAL
       </button>
     </div>
 
+    <div id="appPanel" style="display:none;">
+      <div class="modes">
+        <button id="masuk" class="mode active"
+                onclick="setMode('MASUK')">
+          MASUK
+        </button>
+
+        <button id="pulang" class="mode"
+                onclick="setMode('PULANG')">
+          PULANG
+        </button>
+      </div>
+
     <!-- =================================================
          PESAN / BANNER HARIAN
-         Diambil langsung dari Firebase untuk tanggal hari ini.
+         Diisi otomatis dari Google Apps Script.
          ================================================= -->
     <div id="pesanHarian"></div>
 
@@ -213,38 +300,34 @@
 <div id="reader"></div>
 
     <div id="status"></div>
+    </div>
 
   </div>
 </div>
 
 
 <script>
-/* ================================================================
-   ABSENSI GURU — DIRECT FIREBASE EDITION
-   GitHub Pages -> Firebase Auth -> Firebase Realtime Database
-   Tidak menggunakan Google Apps Script / Google Sheets untuk transaksi.
-   ================================================================ */
-const firebaseConfig = {
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBjUHofZfjCYQ8oW4SLWizHkGuY49SJ2Yc",
-  authDomain: "bsensi-siswa-smkwd.firebaseapp.com",
+  authDomain: "absensi-siswa-smkwd.firebaseapp.com",
   databaseURL: "https://absensi-siswa-smkwd-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "absensi-siswa-smkwd",
   storageBucket: "absensi-siswa-smkwd.firebasestorage.app",
   messagingSenderId: "420017732791",
-  appId: "1:420017732791:web:b841fa4e5c91251e786132",
-  
+  appId: "1:420017732791:web:b841fa4e5c91251e786132"
 };
-
-const FIREBASE_SDK_VERSION = '12.19.0';
 const SCHOOL_ID = 'SMKWD';
+const APP_ID = 'absensi_guru';
 const SCHOOL_LAT = -6.926620085970337;
 const SCHOOL_LNG = 107.56729467121897;
-const RADIUS_MAKSIMUM = 150;
-const FB_ROOT = `schools/${SCHOOL_ID}`;
-const ATTENDANCE_PATH = `${FB_ROOT}/apps/absensi_guru/attendance`;
-const TEACHERS_PATH = `${FB_ROOT}/shared/teachers`;
-const MESSAGE_PATH = `${FB_ROOT}/apps/absensi_guru/pesanHarian`;
-const TERMINAL_USER_PATH = `${FB_ROOT}/security/terminalUsers`; // Profil khusus terminal absensi guru
+const RADIUS_MAKSIMUM = 100;
+const WIB_TIMEZONE = 'Asia/Jakarta';
+
+let firebaseApp = null;
+let firebaseAuth = null;
+let firebaseDb = null;
+let currentUser = null;
+let terminalProfile = null;
 
 let mode = 'MASUK';
 let scanner = null;
@@ -257,352 +340,1207 @@ let qrDecodeBusy = false;
 let qrCanvas = null;
 let qrCtx = null;
 let qrFrameCounter = 0;
+let qrLastDecoded = '';
+let qrLastDecodedAt = 0;
 let qrEvidence = new Map();
 let qrConsecutiveFailures = 0;
 let qrLastRecoveryAt = 0;
-let recentQrSuccess = new Map();
 let lastZoom = null;
 let scanStartedAt = 0;
 let ttsUnlocked = false;
-let firebaseApi = null;
-let currentAuthUser = null;
-let currentProfile = null;
 
-const RECENT_QR_TTL = 1800;
-const QR_EVIDENCE_WINDOW = 900;
-const QR_MIN_EVIDENCE = 2;
-const QR_DECODE_INTERVAL = 80;
-
-function fbKey(v) {
-  return String(v ?? '').trim().replace(/[.#$\/\[\]]/g, '_') || '_';
-}
 function getLocalDateKey() {
   const now = new Date();
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-function getWibParts() {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jakarta', year:'numeric', month:'2-digit', day:'2-digit',
-    hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
-  }).formatToParts(new Date());
-  const out = {};
-  parts.forEach(p => out[p.type] = p.value);
-  return out;
-}
-function todayWIB() {
-  const p = getWibParts();
-  return `${p.year}-${p.month}-${p.day}`;
-}
-function timeWIB() {
-  const p = getWibParts();
-  return `${p.hour}:${p.minute}:${p.second}`;
-}
-function attendanceKey(idGuru) { return `${todayWIB()}_${idGuru}`; }
-function fbError(e) {
-  return e?.message || e?.code || String(e || 'Kesalahan Firebase');
+  return y + '-' + m + '-' + d;
 }
 
-async function initFirebase() {
+/* =====================================================
+   MODE ABSENSI
+   ===================================================== */
+function setMode(pilihan) {
+  if (sedangProses) return;
+  mode = pilihan;
+
+  document.getElementById('masuk').className =
+    mode === 'MASUK' ? 'mode active' : 'mode';
+
+  document.getElementById('pulang').className =
+    mode === 'PULANG' ? 'mode active' : 'mode';
+}
+
+/* =====================================================
+   PESAN / BANNER HARIAN
+   ===================================================== */
+async function loadPesanHarian() {
+  const box = document.getElementById('pesanHarian');
+
   try {
-    const [appMod, dbMod, authMod] = await Promise.all([
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-database.js`),
-      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`)
-    ]);
-    const apps = appMod.getApps();
-    const app = apps.length ? appMod.getApp() : appMod.initializeApp(firebaseConfig);
-    const db = dbMod.getDatabase(app);
-    const auth = authMod.getAuth(app);
+    box.className = 'loading';
+    box.textContent = 'Memuat informasi hari ini...';
+
+    const dateKey = getLocalDateKey();
+    const sessionKey = 'absensi_guru_pesan_' + dateKey;
+    let result = null;
+
     try {
-      await authMod.setPersistence(auth, authMod.browserLocalPersistence);
-    } catch (persistenceError) {
-      console.warn('Persistence browser lokal tidak dapat diaktifkan:', persistenceError);
+      const cached = sessionStorage.getItem(sessionKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        // Jangan gunakan cache error atau cache dari tanggal server yang berbeda.
+        if (parsed && parsed.success && parsed.tanggal === dateKey) {
+          result = parsed;
+        } else if (cached) {
+          sessionStorage.removeItem(sessionKey);
+        }
+      }
+    } catch (cacheError) {
+      console.log('Cache pesan harian tidak dapat dibaca:', cacheError);
+      try { sessionStorage.removeItem(sessionKey); } catch (removeError) {}
     }
-    firebaseApi = { ...appMod, ...dbMod, ...authMod, app, db, auth };
-    await new Promise(resolve => {
-      let done = false;
-      const stop = authMod.onAuthStateChanged(auth, user => {
-        if (!done) { done = true; stop(); resolve(user); }
+
+    if (!result) {
+      await ensureFirebaseReady();
+
+      const messageRef = FirebaseDirect.ref(
+        firebaseDb,
+        `schools/${SCHOOL_ID}/apps/${APP_ID}/pesanHarian/${dateKey}`
+      );
+      const snap = await FirebaseDirect.get(messageRef);
+
+      if (snap.exists()) {
+        const data = snap.val() || {};
+        result = {
+          success: true,
+          adaPesan: data.aktif !== false,
+          tanggal: dateKey,
+          jenis: data.jenis || 'TEKS',
+          isi: data.isi || '',
+          urlGambar: data.urlGambar || ''
+        };
+      } else {
+        result = {
+          success: true,
+          adaPesan: false,
+          tanggal: dateKey
+        };
+      }
+
+      try {
+        sessionStorage.setItem(sessionKey, JSON.stringify(result));
+      } catch (cacheError) {
+        console.log('Cache pesan harian tidak dapat disimpan:', cacheError);
+      }
+    }
+
+    if (!result.success || !result.adaPesan) {
+      box.style.display = 'none';
+      box.className = '';
+      return;
+    }
+
+    box.innerHTML = '';
+    box.className = '';
+
+    if (String(result.jenis).toUpperCase() === 'GAMBAR') {
+      box.classList.add('gambar');
+
+      const img = document.createElement('img');
+      img.src = result.urlGambar;
+      img.alt = result.isi || 'Informasi hari ini';
+      img.loading = 'eager';
+
+      img.onerror = function () {
+        box.className = 'loading';
+        box.textContent =
+          'Gambar informasi hari ini tidak dapat ditampilkan.';
+      };
+
+      box.appendChild(img);
+
+      if (result.isi) {
+        const teks = document.createElement('div');
+        teks.className = 'pesan-teks';
+        teks.textContent = result.isi;
+        box.appendChild(teks);
+      }
+    } else {
+      const teks = document.createElement('div');
+      teks.className = 'pesan-teks';
+      teks.textContent = result.isi || '';
+      box.appendChild(teks);
+    }
+
+    if (result.tanggal) {
+      const tanggal = document.createElement('div');
+      tanggal.className = 'pesan-tanggal';
+      tanggal.textContent = 'Informasi hari ini';
+      box.appendChild(tanggal);
+    }
+
+    box.style.display = 'block';
+
+  } catch (error) {
+    console.error('Gagal memuat pesan harian:', error);
+    box.style.display = 'none';
+    box.className = '';
+  }
+}
+
+/* =====================================================
+   STATUS
+   ===================================================== */
+function showStatus(pesan, tipe) {
+  const status = document.getElementById('status');
+  status.className = tipe;
+  status.textContent = pesan;
+}
+
+/* =====================================================
+   QR SCANNER — jsQR + SUPER SENSITIVE PIPELINE
+   Decoder diganti dari qr-scanner ke jsQR.
+   Lapisan kamera, autofocus, autozoom, continuous scan,
+   ROI, upscale, recovery, multi-frame validation dan
+   anti-duplikat tetap berada di aplikasi.
+   ===================================================== */
+let recentQrSuccess = new Map();
+const RECENT_QR_TTL = 1800;
+const QR_EVIDENCE_WINDOW = 900;
+const QR_MIN_EVIDENCE = 2;
+const QR_DECODE_INTERVAL = 80;
+
+function bersihkanCacheQr() {
+  const now = Date.now();
+  for (const [id, time] of recentQrSuccess) {
+    if (now - time > RECENT_QR_TTL) recentQrSuccess.delete(id);
+  }
+  for (const [id, data] of qrEvidence) {
+    if (now - data.lastAt > QR_EVIDENCE_WINDOW) qrEvidence.delete(id);
+  }
+}
+
+async function startScanner() {
+  if (scanner) {
+    showStatus('Kamera masih aktif dan terus memindai.', 'info');
+    return;
+  }
+
+  const btnCamera = document.getElementById('btnCamera');
+
+  try {
+    btnCamera.disabled = true;
+    document.getElementById('reader').innerHTML = '';
+
+    if (!window.isSecureContext) {
+      throw new Error('Kamera membutuhkan HTTPS atau koneksi aman.');
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Browser/WebView tidak menyediakan akses kamera.');
+    }
+    if (!window.jsQR) {
+      throw new Error('Pustaka jsQR gagal dimuat. Periksa koneksi internet.');
+    }
+
+    showStatus('Meminta izin kamera dan menyiapkan scanner...', 'info');
+    bukaKunciTTS();
+
+    let permissionStream;
+    try {
+      permissionStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
       });
-    });
-    return firebaseApi;
-  } catch (e) {
-    throw new Error('Firebase gagal dimuat: ' + fbError(e));
-  }
-}
+      permissionStream.getTracks().forEach(track => track.stop());
+    } catch (permissionError) {
+      const name = permissionError && permissionError.name;
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        throw new Error('Izin kamera ditolak. Izinkan Kamera untuk browser/aplikasi ini lalu coba lagi.');
+      }
+      if (name === 'NotFoundError') {
+        throw new Error('Kamera tidak ditemukan pada perangkat.');
+      }
+      throw permissionError;
+    }
 
-async function fbGet(path) {
-  const { ref, get, db } = firebaseApi;
-  const snap = await get(ref(db, path));
-  return snap.exists() ? snap.val() : null;
-}
-async function fbSet(path, value) {
-  const { ref, set, db } = firebaseApi;
-  return set(ref(db, path), value);
-}
+    const reader = document.getElementById('reader');
+    const video = document.createElement('video');
+    video.id = 'qrVideo';
+    video.className = 'qr-video';
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('autoplay', 'true');
+    video.setAttribute('muted', 'true');
+    video.muted = true;
+    reader.appendChild(video);
 
-function showActivation(show, message='') {
-  let box = document.getElementById('firebaseActivation');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'firebaseActivation';
-    box.innerHTML = `
-      <div style="position:fixed;inset:0;z-index:99999;background:rgba(15,23,42,.94);display:flex;align-items:center;justify-content:center;padding:20px">
-        <div style="width:min(430px,100%);background:white;border-radius:20px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)">
-          <h2 style="margin:0 0 8px;text-align:center;color:#0f172a">Aktivasi Perangkat</h2>
-          <p style="font-size:13px;line-height:1.55;color:#64748b;text-align:center;margin:0 0 18px">Masukkan akun Firebase khusus terminal absensi satu kali. Setelah berhasil, sesi akan disimpan oleh browser sehingga guru tidak perlu login setiap hari.</p>
-          <input id="fbEmail" type="email" autocomplete="username" placeholder="Email akun Firebase terminal" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;margin-bottom:10px;font-size:14px">
-          <input id="fbPassword" type="password" autocomplete="current-password" placeholder="Password" style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;margin-bottom:12px;font-size:14px">
-          <button id="fbActivateBtn" style="width:100%;padding:13px;border:0;border-radius:10px;background:#2563eb;color:white;font-weight:700;cursor:pointer">AKTIFKAN PERANGKAT</button>
-          <div id="fbActivationMsg" style="margin-top:12px;text-align:center;font-size:13px;color:#b91c1c;min-height:18px"></div>
-        </div>
-      </div>`;
-    document.body.appendChild(box);
-    document.getElementById('fbActivateBtn').onclick = aktivasiPerangkat;
-  }
-  box.style.display = show ? 'block' : 'none';
-  const msg = document.getElementById('fbActivationMsg');
-  if (msg) msg.textContent = message || '';
-}
+    cameraStream = await bukaKameraJsQR(video);
+    cameraTrack = cameraStream.getVideoTracks()[0] || null;
+    scanner = { isScanning: true, video: video };
 
-async function aktivasiPerangkat() {
-  const email = document.getElementById('fbEmail').value.trim();
-  const password = document.getElementById('fbPassword').value;
-  const btn = document.getElementById('fbActivateBtn');
-  const msg = document.getElementById('fbActivationMsg');
-  if (!email || !password) { msg.textContent = 'Email dan password wajib diisi.'; return; }
-  btn.disabled = true; btn.textContent = 'MEMVERIFIKASI...'; msg.textContent = '';
-  try {
-    const cred = await firebaseApi.signInWithEmailAndPassword(firebaseApi.auth, email, password);
-    await validasiProfilTerminal(cred.user);
-    showActivation(false);
-    showStatus('Terminal terhubung ke Firebase. Scanner siap digunakan.', 'success');
-    loadPesanHarian();
-  } catch (e) {
-    try { await firebaseApi.signOut(firebaseApi.auth); } catch (_) {}
-    msg.textContent = 'Aktivasi gagal: ' + fbError(e);
+    await tungguVideoAktif();
+    await optimalkanKamera();
+
+    qrCanvas = document.createElement('canvas');
+    qrCanvas.width = video.videoWidth || 1280;
+    qrCanvas.height = video.videoHeight || 720;
+    qrCtx = qrCanvas.getContext('2d', { willReadFrequently: true });
+
+    scanStartedAt = Date.now();
+    qrScanRunning = true;
+    qrConsecutiveFailures = 0;
+    startJsQrLoop();
+
+    showStatus(
+      'Kamera aktif. Arahkan QR Code Guru ke kamera. Scanner terus aktif.',
+      'info'
+    );
+  } catch (error) {
+    console.error('Gagal membuka kamera:', error);
+    await bersihkanScanner();
+    showStatus(
+      'Kamera/scanner gagal dibuka: ' + (error.message || error),
+      'error'
+    );
   } finally {
-    btn.disabled = false; btn.textContent = 'AKTIFKAN PERANGKAT';
+    btnCamera.disabled = !!scanner;
   }
 }
 
-async function validasiProfilTerminal(user) {
-  const profile = await fbGet(`${TERMINAL_USER_PATH}/${fbKey(user.uid)}`);
-  if (!profile || profile.active !== true) throw new Error('Akun terminal tidak aktif atau profil terminal belum dibuat.');
-  const role = String(profile.role || '').toLowerCase();
-  if (role !== 'terminal') throw new Error('Akun perangkat tidak memiliki role terminal.');
-  currentAuthUser = user;
-  currentProfile = profile;
-  return profile;
+async function bukaKameraJsQR(video) {
+  const constraints = {
+    audio: false,
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30, max: 30 }
+    }
+  };
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (error) {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 }
+      }
+    });
+  }
+
+  video.srcObject = stream;
+  await video.play();
+  return stream;
 }
 
-async function bootstrapAuth() {
-  await initFirebase();
-  const user = firebaseApi.auth.currentUser;
-  if (!user) { showActivation(true); return false; }
+async function tungguVideoAktif() {
+  const video = document.querySelector('#reader video');
+  if (!video) return;
+
+  for (let i = 0; i < 40; i++) {
+    if (video.readyState >= 2 && video.videoWidth && video.videoHeight && video.srcObject) {
+      cameraStream = video.srcObject;
+      const tracks = cameraStream.getVideoTracks();
+      if (tracks.length) cameraTrack = tracks[0];
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+function startJsQrLoop() {
+  if (!qrScanRunning) return;
+  requestAnimationFrame(jsQrFrameLoop);
+}
+
+async function jsQrFrameLoop() {
+  if (!qrScanRunning) return;
+
+  const now = performance.now();
+  if (!qrDecodeBusy && now - (jsQrFrameLoop.lastRun || 0) >= QR_DECODE_INTERVAL) {
+    jsQrFrameLoop.lastRun = now;
+    try {
+      await decodeQrFrameSuperSensitive();
+    } catch (error) {
+      console.warn('Decode QR error:', error);
+    }
+  }
+
+  requestAnimationFrame(jsQrFrameLoop);
+}
+
+async function decodeQrFrameSuperSensitive() {
+  if (qrDecodeBusy || !cameraTrack || !qrCtx || !window.jsQR) return;
+  const video = document.getElementById('qrVideo');
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+
+  qrDecodeBusy = true;
+  qrFrameCounter++;
+  let found = null;
+
   try {
-    await validasiProfilTerminal(user);
-    showActivation(false);
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+
+    // Pass 1: full frame, native resolution.
+    found = decodeJsQrRegion(video, 0, 0, w, h, 1, false);
+
+    // Pass 2: large ROI, modest upscale — membantu QR yang relatif kecil.
+    if (!found) {
+      const rw = Math.floor(w * 0.88);
+      const rh = Math.floor(h * 0.88);
+      found = decodeJsQrRegion(
+        video,
+        Math.floor((w - rw) / 2),
+        Math.floor((h - rh) / 2),
+        rw,
+        rh,
+        1.25,
+        false
+      );
+    }
+
+    // Pass 3: center ROI + stronger upscale.
+    if (!found) {
+      const rw = Math.floor(w * 0.68);
+      const rh = Math.floor(h * 0.68);
+      found = decodeJsQrRegion(
+        video,
+        Math.floor((w - rw) / 2),
+        Math.floor((h - rh) / 2),
+        rw,
+        rh,
+        1.6,
+        false
+      );
+    }
+
+    // Pass 4: grayscale/contrast recovery.
+    if (!found) {
+      const rw = Math.floor(w * 0.78);
+      const rh = Math.floor(h * 0.78);
+      found = decodeJsQrRegion(
+        video,
+        Math.floor((w - rw) / 2),
+        Math.floor((h - rh) / 2),
+        rw,
+        rh,
+        1.35,
+        true
+      );
+    }
+
+    if (found && found.data) {
+      qrConsecutiveFailures = 0;
+      registerQrEvidence(String(found.data).trim());
+    } else {
+      qrConsecutiveFailures++;
+      await recoveryKameraJikaPerlu();
+    }
+  } finally {
+    qrDecodeBusy = false;
+  }
+}
+
+function decodeJsQrRegion(video, sx, sy, sw, sh, scale, enhance) {
+  const width = Math.max(1, Math.floor(sw * scale));
+  const height = Math.max(1, Math.floor(sh * scale));
+  qrCanvas.width = width;
+  qrCanvas.height = height;
+
+  qrCtx.drawImage(video, sx, sy, sw, sh, 0, 0, width, height);
+  const image = qrCtx.getImageData(0, 0, width, height);
+
+  if (enhance) enhanceImageData(image);
+
+  return window.jsQR(image.data, width, height, {
+    inversionAttempts: 'attemptBoth'
+  });
+}
+
+function enhanceImageData(image) {
+  const data = image.data;
+  let min = 255;
+  let max = 0;
+
+  // Kontras global ringan; tidak mengubah warna secara agresif.
+  for (let i = 0; i < data.length; i += 4) {
+    const y = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+    if (y < min) min = y;
+    if (y > max) max = y;
+  }
+
+  const range = Math.max(1, max - min);
+  for (let i = 0; i < data.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      data[i + c] = Math.max(0, Math.min(255,
+        Math.round((data[i + c] - min) * 255 / range)
+      ));
+    }
+  }
+}
+
+function registerQrEvidence(text) {
+  if (!text) return;
+  const now = Date.now();
+  bersihkanCacheQr();
+
+  const current = qrEvidence.get(text);
+  if (!current || now - current.lastAt > QR_EVIDENCE_WINDOW) {
+    qrEvidence.set(text, { count: 1, firstAt: now, lastAt: now });
+    return;
+  }
+
+  current.count += 1;
+  current.lastAt = now;
+
+  if (current.count >= QR_MIN_EVIDENCE) {
+    qrEvidence.delete(text);
+    onScanSuccess(text);
+  }
+}
+
+async function recoveryKameraJikaPerlu() {
+  if (!cameraTrack || qrConsecutiveFailures < 8) return;
+  const now = Date.now();
+  if (now - qrLastRecoveryAt < 1500) return;
+  qrLastRecoveryAt = now;
+
+  try {
+    const capabilities = cameraTrack.getCapabilities?.() || {};
+    const advanced = [];
+    if (Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+      advanced.push({ focusMode: 'continuous' });
+    }
+    if (advanced.length) await cameraTrack.applyConstraints({ advanced });
+  } catch (error) {
+    console.log('Recovery kamera dilewati:', error);
+  }
+
+  qrConsecutiveFailures = 0;
+}
+
+async function optimalkanKamera() {
+  if (!cameraTrack) return;
+
+  const capabilities =
+    typeof cameraTrack.getCapabilities === 'function'
+      ? cameraTrack.getCapabilities()
+      : {};
+
+  const settings =
+    typeof cameraTrack.getSettings === 'function'
+      ? cameraTrack.getSettings()
+      : {};
+
+  if (capabilities.focusMode) {
+    const modes = Array.isArray(capabilities.focusMode)
+      ? capabilities.focusMode
+      : [];
+    try {
+      if (modes.includes('continuous')) {
+        await cameraTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      } else if (modes.includes('single-shot')) {
+        await cameraTrack.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] });
+      }
+    } catch (err) {
+      console.log('Autofocus tidak dapat diterapkan:', err);
+    }
+  }
+
+  if (capabilities.zoom) {
+    const min = Number(capabilities.zoom.min);
+    const max = Number(capabilities.zoom.max);
+    const step = Number(capabilities.zoom.step) || 0.1;
+
+    if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
+      const current = Number(settings.zoom);
+      lastZoom = Number.isFinite(current) ? current : min;
+
+      const startZoom = clamp(
+        lastZoom,
+        min,
+        Math.min(max, min + Math.max(step * 2, (max - min) * 0.12))
+      );
+
+      await applyZoom(startZoom);
+
+      clearInterval(autoZoomTimer);
+      autoZoomTimer = setInterval(async () => {
+        if (!scanner || !cameraTrack) {
+          clearInterval(autoZoomTimer);
+          autoZoomTimer = null;
+          return;
+        }
+        if (sedangProses) return;
+        const elapsed = Date.now() - scanStartedAt;
+        if (elapsed < 3000) return;
+
+        const currentZoom = Number(lastZoom);
+        const increment = Math.max(step, (max - min) * 0.06);
+        const nextZoom = Math.min(max, currentZoom + increment);
+        if (nextZoom > currentZoom + 0.0001) {
+          await applyZoom(nextZoom);
+        } else {
+          clearInterval(autoZoomTimer);
+          autoZoomTimer = null;
+        }
+      }, 2000);
+    }
+  }
+}
+
+async function applyZoom(value) {
+  if (!cameraTrack || typeof cameraTrack.getCapabilities !== 'function') return;
+  const capabilities = cameraTrack.getCapabilities();
+  if (!capabilities.zoom) return;
+
+  const min = Number(capabilities.zoom.min);
+  const max = Number(capabilities.zoom.max);
+  const step = Number(capabilities.zoom.step) || 0.1;
+  let zoom = clamp(Number(value), min, max);
+
+  if (step > 0) {
+    zoom = min + Math.round((zoom - min) / step) * step;
+    zoom = clamp(zoom, min, max);
+  }
+
+  try {
+    await cameraTrack.applyConstraints({ advanced: [{ zoom }] });
+    lastZoom = zoom;
+  } catch (err) {
+    console.log('Auto zoom tidak dapat diterapkan:', err);
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+/* =====================================================
+   QR BERHASIL DIBACA
+   jsQR loop terus aktif. Tidak ada stop() di sini.
+   ===================================================== */
+async function onScanSuccess(decodedText) {
+  const idGuru = String(decodedText || '').trim();
+  if (!idGuru) return;
+
+  bersihkanCacheQr();
+  if (recentQrSuccess.has(idGuru)) return;
+  if (sedangProses) return;
+
+  sedangProses = true;
+  const statusAbsensi = mode;
+
+  showStatus('QR terbaca. Mengambil lokasi GPS...', 'info');
+
+  try {
+    const result = await prosesAbsensiDariQR(idGuru, statusAbsensi);
+
+    if (result && result.success) recentQrSuccess.set(idGuru, Date.now());
+
+    if (result) {
+      if (result.success) {
+        const nama = result.guru && result.guru.nama ? result.guru.nama : idGuru;
+        const status = result.status || statusAbsensi;
+        const jam = result.jam || '-';
+        const jarak = Number.isFinite(Number(result.jarak)) ? result.jarak : '-';
+
+        showStatus(
+          'ABSENSI BERHASIL\n' + result.message +
+          '\nNama: ' + nama + '\nStatus: ' + status +
+          '\nJam: ' + jam + '\nJarak: ' + jarak + ' meter',
+          'success'
+        );
+
+        bicara('Absensi ' + status.toLowerCase() + ' berhasil untuk ' + nama + '.');
+      } else {
+        showStatus(result.message || 'Absensi ditolak.', 'error');
+        bicara(result.message || 'Absensi ditolak.');
+      }
+    }
+  } catch (error) {
+    console.error('Kesalahan proses absensi:', error);
+    showStatus('Gagal memproses absensi: ' + (error.message || error), 'error');
+  } finally {
+    sedangProses = false;
+  }
+}
+
+/* =====================================================
+   PROSES ABSENSI DARI QR
+   Scanner tetap hidup selama GPS + backend diproses.
+   ===================================================== */
+async function prosesAbsensiDariQR(idGuru, statusAbsensi) {
+  sedangProses = true;
+
+  if (!navigator.geolocation) {
+    return {
+      success: false,
+      message: 'Perangkat tidak mendukung GPS.'
+    };
+  }
+
+  showStatus(
+    'QR ' + idGuru + ' tervalidasi. Mengambil lokasi GPS...',
+    'info'
+  );
+
+  try {
+    const position = await ambilLokasiGPS();
+
+    return await kirimAbsensi(
+      idGuru,
+      position.coords.latitude,
+      position.coords.longitude,
+      statusAbsensi
+    );
+  } catch (error) {
+    return {
+      success: false,
+      message: 'GPS tidak dapat diakses: ' + (error.message || error)
+    };
+  }
+}
+
+/* =====================================================
+   AMBIL LOKASI GPS — TIDAK DIUBAH
+   ===================================================== */
+function ambilLokasiGPS() {
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 5000
+    });
+  });
+}
+
+/* =====================================================
+   BERSIHKAN SCANNER
+   Hanya dipakai saat scanner memang harus ditutup.
+   ===================================================== */
+async function bersihkanScanner() {
+  clearInterval(autoZoomTimer);
+  autoZoomTimer = null;
+  qrScanRunning = false;
+  qrDecodeBusy = false;
+  qrEvidence.clear();
+
+  const activeStream = cameraStream;
+  scanner = null;
+
+  try {
+    if (activeStream) {
+      activeStream.getTracks().forEach(track => {
+        try { track.stop(); } catch (e) {}
+      });
+    }
+  } finally {
+    cameraTrack = null;
+    cameraStream = null;
+    const reader = document.getElementById('reader');
+    if (reader) reader.innerHTML = '';
+    qrCanvas = null;
+    qrCtx = null;
+  }
+}
+
+/* =====================================================
+   KIRIM KE GOOGLE APPS SCRIPT
+   ===================================================== */
+async function kirimAbsensi(
+  idGuru,
+  latitude,
+  longitude,
+  statusAbsensi
+) {
+  try {
+    await ensureFirebaseReady();
+
+    // 1) Point-read master guru saja. Tidak membaca seluruh teachers.
+    // Firebase path keys normally do not contain '/', so use the raw ID when safe.
+    const safeIdGuru = String(idGuru).trim();
+    const directTeacherRef = FirebaseDirect.ref(
+      firebaseDb,
+      `schools/${SCHOOL_ID}/shared/teachers/${safeIdGuru}`
+    );
+
+    const teacherSnap = await FirebaseDirect.get(directTeacherRef);
+    if (!teacherSnap.exists()) {
+      return {
+        success: false,
+        message: 'QR Guru tidak terdaftar: ' + safeIdGuru
+      };
+    }
+
+    const guru = teacherSnap.val() || {};
+    const nama = guru.nama || safeIdGuru;
+
+    // 2) Hitung tanggal/jam WIB dari browser terminal.
+    const now = new Date();
+    const tanggal = formatWib(now, 'yyyy-MM-dd');
+    const jamSekarang = formatWib(now, 'HH:mm:ss');
+
+    // 3) Point-read + transaction hanya pada record hari ini untuk guru tersebut.
+    //    Tidak pernah membaca parent attendance/history.
+    const attendanceKey = `${tanggal}_${safeIdGuru}`;
+    const attendanceRef = FirebaseDirect.ref(
+      firebaseDb,
+      `schools/${SCHOOL_ID}/apps/${APP_ID}/attendance/${attendanceKey}`
+    );
+
+    const jarak = hitungJarakMeter(
+      latitude,
+      longitude,
+      SCHOOL_LAT,
+      SCHOOL_LNG
+    );
+
+    if (jarak > RADIUS_MAKSIMUM) {
+      return {
+        success: false,
+        message: `Di luar radius absensi. Jarak Anda ${Math.round(jarak)} meter. Maksimal ${RADIUS_MAKSIMUM} meter.`,
+        guru,
+        jarak: Math.round(jarak)
+      };
+    }
+
+    const transactionResult = await FirebaseDirect.runTransaction(
+      attendanceRef,
+      current => {
+        if (statusAbsensi === 'MASUK') {
+          if (current === null) {
+            return {
+              tanggal,
+              idGuru: safeIdGuru,
+              nama,
+              jabatan: guru.jabatan || '',
+              kelas: guru.kelas || '',
+              mataPelajaran: guru.mataPelajaran || '',
+              jamMasuk: jamSekarang,
+              jamPulang: '',
+              latitude,
+              longitude,
+              jarakMeter: Math.round(jarak),
+              kunciAbsensi: attendanceKey
+            };
+          }
+
+          // Sudah MASUK -> batalkan transaksi tanpa mengubah data.
+          return;
+        }
+
+        if (statusAbsensi === 'PULANG') {
+          if (current === null) {
+            return;
+          }
+
+          if (current.jamPulang) {
+            return;
+          }
+
+          if (!current.jamMasuk) {
+            return;
+          }
+
+          return {
+            ...current,
+            jamPulang: jamSekarang,
+            latitudePulang: latitude,
+            longitudePulang: longitude,
+            jarakMeterPulang: Math.round(jarak)
+          };
+        }
+
+        return;
+      }
+    );
+
+    if (!transactionResult.committed) {
+      const finalSnap = await FirebaseDirect.get(attendanceRef);
+      const finalData = finalSnap.exists() ? (finalSnap.val() || {}) : null;
+
+      if (statusAbsensi === 'MASUK') {
+        if (finalData && finalData.jamMasuk) {
+          return {
+            success: false,
+            message: `Guru sudah melakukan MASUK pada ${finalData.jamMasuk}.`,
+            guru,
+            status: 'MASUK',
+            jam: finalData.jamMasuk,
+            jarak: finalData.jarakMeter
+          };
+        }
+
+        return {
+          success: false,
+          message: 'Absensi MASUK tidak dapat diproses.',
+          guru
+        };
+      }
+
+      if (statusAbsensi === 'PULANG') {
+        if (!finalData) {
+          return {
+            success: false,
+            message: 'Belum ada data MASUK untuk guru ini hari ini.',
+            guru
+          };
+        }
+
+        if (finalData.jamPulang) {
+          return {
+            success: false,
+            message: `Guru sudah melakukan PULANG pada ${finalData.jamPulang}.`,
+            guru,
+            status: 'PULANG',
+            jam: finalData.jamPulang,
+            jarak: finalData.jarakMeterPulang
+          };
+        }
+
+        return {
+          success: false,
+          message: 'Absensi PULANG tidak dapat diproses.',
+          guru
+        };
+      }
+    }
+
+    return {
+      success: true,
+      message: statusAbsensi === 'MASUK'
+        ? 'Absensi MASUK berhasil.'
+        : 'Absensi PULANG berhasil.',
+      guru,
+      status: statusAbsensi,
+      jam: jamSekarang,
+      jarak: Math.round(jarak)
+    };
+
+  } catch (error) {
+    console.error('Kesalahan Firebase absensi:', error);
+
+    const code = error && error.code ? error.code : '';
+    if (code === 'PERMISSION_DENIED') {
+      return {
+        success: false,
+        message: 'Akses Firebase ditolak. Profil terminal belum aktif atau Rules belum dipasang.'
+      };
+    }
+
+    return {
+      success: false,
+      message: 'Gagal memproses absensi: ' + (error.message || error)
+    };
+  }
+}
+
+function hitungJarakMeter(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatWib(date, pattern) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: WIB_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).reduce((o, p) => {
+    o[p.type] = p.value;
+    return o;
+  }, {});
+
+  if (pattern === 'yyyy-MM-dd') {
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  }
+
+  return `${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+async function ensureFirebaseReady() {
+  if (firebaseApp && firebaseAuth && firebaseDb && currentUser) return;
+
+  if (!window.FirebaseDirect) {
+    throw new Error('Firebase SDK belum selesai dimuat.');
+  }
+
+  if (!firebaseApp) {
+    firebaseApp = FirebaseDirect.initializeApp(FIREBASE_CONFIG);
+    firebaseAuth = FirebaseDirect.getAuth(firebaseApp);
+    firebaseDb = FirebaseDirect.getDatabase(firebaseApp);
+    await FirebaseDirect.setPersistence(
+      firebaseAuth,
+      FirebaseDirect.browserLocalPersistence
+    );
+  }
+
+  if (!currentUser) {
+    currentUser = firebaseAuth.currentUser;
+  }
+
+  if (!currentUser) {
+    throw new Error('Terminal belum terautentikasi.');
+  }
+
+  await loadTerminalProfile();
+}
+
+async function loadTerminalProfile() {
+  if (!currentUser) throw new Error('Tidak ada akun Firebase.');
+
+  const profileRef = FirebaseDirect.ref(
+    firebaseDb,
+    `schools/${SCHOOL_ID}/security/terminalUsers/${currentUser.uid}`
+  );
+  const snap = await FirebaseDirect.get(profileRef);
+
+  if (!snap.exists()) {
+    throw new Error(
+      'Akun Firebase belum terdaftar sebagai terminal. Buat profil security/terminalUsers untuk UID ini.'
+    );
+  }
+
+  terminalProfile = snap.val() || {};
+
+  if (terminalProfile.active !== true) {
+    throw new Error('Terminal belum diaktifkan oleh administrator.');
+  }
+}
+
+async function loginTerminal() {
+  const email = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const btn = document.getElementById('btnAuth');
+
+  if (!email || !password) {
+    showStatus('Email dan password Firebase wajib diisi.', 'error');
+    return;
+  }
+
+  try {
+    btn.disabled = true;
+    showStatus('Menghubungkan ke Firebase...', 'info');
+
+    if (!window.FirebaseDirect) {
+      throw new Error('Firebase SDK belum selesai dimuat. Tunggu sebentar lalu coba lagi.');
+    }
+
+    await tungguFirebaseSDK();
+
+    if (!firebaseApp) {
+      firebaseApp = FirebaseDirect.initializeApp(FIREBASE_CONFIG);
+      firebaseAuth = FirebaseDirect.getAuth(firebaseApp);
+      firebaseDb = FirebaseDirect.getDatabase(firebaseApp);
+      await FirebaseDirect.setPersistence(
+        firebaseAuth,
+        FirebaseDirect.browserLocalPersistence
+      );
+    }
+
+    const credential = await FirebaseDirect.signInWithEmailAndPassword(
+      firebaseAuth,
+      email,
+      password
+    );
+
+    currentUser = credential.user;
+    await loadTerminalProfile();
+
+    tampilkanAplikasiUtama();
+    showStatus('Terminal berhasil diaktifkan. Scanner siap digunakan.', 'success');
+    await loadPesanHarian();
+
+    // Setelah sesi tersimpan, kosongkan password dari field.
+    document.getElementById('authPassword').value = '';
+  } catch (error) {
+    console.error('Login terminal gagal:', error);
+
+    let message = 'Gagal mengaktifkan terminal.';
+    if (error && error.code === 'auth/invalid-credential') {
+      message = 'Email atau password Firebase tidak benar.';
+    } else if (error && error.code === 'auth/too-many-requests') {
+      message = 'Terlalu banyak percobaan. Tunggu beberapa saat.';
+    } else if (error && error.message) {
+      message = error.message;
+    }
+
+    showStatus(message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function tampilkanAplikasiUtama() {
+  document.getElementById('authPanel').style.display = 'none';
+  document.getElementById('appPanel').style.display = 'block';
+}
+
+function tampilkanAuthPanel() {
+  document.getElementById('authPanel').style.display = 'block';
+  document.getElementById('appPanel').style.display = 'none';
+}
+
+/* =====================================================
+   SUARA / TTS
+   Tidak menghalangi scanner.
+   ===================================================== */
+function bicara(teks) {
+  if (!('speechSynthesis' in window)) return false;
+
+  try {
+    const isi = String(teks || '').trim();
+    if (!isi) return false;
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(isi);
+    utterance.lang = 'id-ID';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+    ttsUnlocked = true;
     return true;
-  } catch (e) {
-    try { await firebaseApi.signOut(firebaseApi.auth); } catch (_) {}
-    showActivation(true, e.message);
+  } catch (error) {
+    console.warn('TTS tidak dapat dijalankan:', error);
     return false;
   }
 }
 
-function setMode(pilihan) {
-  if (sedangProses) return;
-  mode = pilihan;
-  document.getElementById('masuk').className = mode === 'MASUK' ? 'mode active' : 'mode';
-  document.getElementById('pulang').className = mode === 'PULANG' ? 'mode active' : 'mode';
-}
+function bukaKunciTTS() {
+  if (!('speechSynthesis' in window)) return;
 
-async function loadPesanHarian() {
-  const box = document.getElementById('pesanHarian');
   try {
-    box.className = 'loading';
-    box.textContent = 'Memuat informasi hari ini...';
-    const dateKey = todayWIB();
-    const result = await fbGet(`${MESSAGE_PATH}/${dateKey}`);
-    if (!result || result.aktif === false) { box.style.display = 'none'; box.className = ''; return; }
-    box.innerHTML = ''; box.className = '';
-    if (String(result.jenis || 'TEKS').toUpperCase() === 'GAMBAR' && result.urlGambar) {
-      box.classList.add('gambar');
-      const img = document.createElement('img');
-      img.src = result.urlGambar; img.alt = result.isi || 'Informasi hari ini'; img.loading = 'eager';
-      img.onerror = () => { box.className = 'loading'; box.textContent = 'Gambar informasi hari ini tidak dapat ditampilkan.'; };
-      box.appendChild(img);
-      if (result.isi) { const t=document.createElement('div'); t.className='pesan-teks'; t.textContent=result.isi; box.appendChild(t); }
-    } else {
-      const t=document.createElement('div'); t.className='pesan-teks'; t.textContent=result.isi || ''; box.appendChild(t);
-    }
-    const tanggal=document.createElement('div'); tanggal.className='pesan-tanggal'; tanggal.textContent='Informasi hari ini'; box.appendChild(tanggal);
-    box.style.display='block';
-  } catch (e) {
-    console.warn('Pesan harian tidak dapat dimuat:', e);
-    box.style.display='none'; box.className='';
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(
+      'Scanner absensi guru aktif.'
+    );
+    utterance.lang = 'id-ID';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    window.speechSynthesis.speak(utterance);
+    ttsUnlocked = true;
+  } catch (error) {
+    console.warn('TTS belum dapat diaktifkan:', error);
   }
 }
 
-function showStatus(pesan, tipe) {
-  const status = document.getElementById('status');
-  status.className = tipe; status.textContent = pesan;
-}
-
 /* =====================================================
-   QR SCANNER — tetap menggunakan pipeline scanner asli
+   TTS / VISIBILITY
    ===================================================== */
-function bersihkanCacheQr() {
-  const now = Date.now();
-  for (const [id,time] of recentQrSuccess) if (now-time > RECENT_QR_TTL) recentQrSuccess.delete(id);
-  for (const [id,data] of qrEvidence) if (now-data.lastAt > QR_EVIDENCE_WINDOW) qrEvidence.delete(id);
-}
-async function startScanner() {
-  if (scanner) { showStatus('Kamera masih aktif dan terus memindai.', 'info'); return; }
-  const btnCamera=document.getElementById('btnCamera');
-  try {
-    btnCamera.disabled=true; document.getElementById('reader').innerHTML='';
-    if (!window.isSecureContext) throw new Error('Kamera membutuhkan HTTPS atau koneksi aman.');
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('Browser tidak menyediakan akses kamera.');
-    if (!window.jsQR) throw new Error('Pustaka jsQR gagal dimuat.');
-    if (!firebaseApi?.auth?.currentUser) throw new Error('Perangkat belum terautentikasi ke Firebase.');
-    showStatus('Meminta izin kamera dan menyiapkan scanner...', 'info');
-    bukaKunciTTS();
-    let permissionStream;
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && 'speechSynthesis' in window) {
     try {
-      permissionStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-      permissionStream.getTracks().forEach(t=>t.stop());
-    } catch(e) {
-      if (e.name==='NotAllowedError'||e.name==='PermissionDeniedError') throw new Error('Izin kamera ditolak. Izinkan Kamera untuk browser lalu coba lagi.');
-      if (e.name==='NotFoundError') throw new Error('Kamera tidak ditemukan pada perangkat.');
-      throw e;
+      window.speechSynthesis.resume();
+    } catch (error) {
+      console.warn('TTS resume tidak dapat dijalankan:', error);
     }
-    const reader=document.getElementById('reader');
-    const video=document.createElement('video');
-    video.id='qrVideo'; video.className='qr-video'; video.setAttribute('playsinline','true'); video.autoplay=true; video.muted=true; reader.appendChild(video);
-    cameraStream=await bukaKameraJsQR(video); cameraTrack=cameraStream.getVideoTracks()[0]||null;
-    scanner={isScanning:true,video}; await tungguVideoAktif(); await optimalkanKamera();
-    qrCanvas=document.createElement('canvas'); qrCanvas.width=video.videoWidth||1280; qrCanvas.height=video.videoHeight||720;
-    qrCtx=qrCanvas.getContext('2d',{willReadFrequently:true}); scanStartedAt=Date.now(); qrScanRunning=true; qrConsecutiveFailures=0; startJsQrLoop();
-    showStatus('Kamera aktif. Arahkan QR Code Guru ke kamera. Scanner terus aktif.','info');
-  } catch(e) {
-    console.error('Gagal membuka kamera:',e); await bersihkanScanner(); showStatus('Kamera/scanner gagal dibuka: '+fbError(e),'error');
-  } finally { btnCamera.disabled=!!scanner; }
-}
-async function bukaKameraJsQR(video) {
-  const constraints={audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30,max:30}}};
-  let stream; try { stream=await navigator.mediaDevices.getUserMedia(constraints); } catch(e) { stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:30}}}); }
-  video.srcObject=stream; await video.play(); return stream;
-}
-async function tungguVideoAktif(){
-  const video=document.querySelector('#reader video'); if(!video)return;
-  for(let i=0;i<40;i++){ if(video.readyState>=2&&video.videoWidth&&video.videoHeight&&video.srcObject){cameraStream=video.srcObject;const tracks=cameraStream.getVideoTracks();if(tracks.length)cameraTrack=tracks[0];return;} await new Promise(r=>setTimeout(r,100)); }
-}
-function startJsQrLoop(){if(!qrScanRunning)return;requestAnimationFrame(jsQrFrameLoop);}
-async function jsQrFrameLoop(){if(!qrScanRunning)return;const now=performance.now();if(!qrDecodeBusy&&now-(jsQrFrameLoop.lastRun||0)>=QR_DECODE_INTERVAL){jsQrFrameLoop.lastRun=now;try{await decodeQrFrameSuperSensitive();}catch(e){console.warn('Decode QR error:',e);}}requestAnimationFrame(jsQrFrameLoop);}
-async function decodeQrFrameSuperSensitive(){
-  if(qrDecodeBusy||!cameraTrack||!qrCtx||!window.jsQR)return;
-  const video=document.getElementById('qrVideo'); if(!video||video.readyState<2||!video.videoWidth||!video.videoHeight)return;
-  qrDecodeBusy=true; qrFrameCounter++; let found=null;
-  try{
-    const w=video.videoWidth,h=video.videoHeight;
-    found=decodeJsQrRegion(video,0,0,w,h,1,false);
-    if(!found){const rw=Math.floor(w*.88),rh=Math.floor(h*.88);found=decodeJsQrRegion(video,Math.floor((w-rw)/2),Math.floor((h-rh)/2),rw,rh,1.25,false);}
-    if(!found){const rw=Math.floor(w*.68),rh=Math.floor(h*.68);found=decodeJsQrRegion(video,Math.floor((w-rw)/2),Math.floor((h-rh)/2),rw,rh,1.6,false);}
-    if(!found){const rw=Math.floor(w*.78),rh=Math.floor(h*.78);found=decodeJsQrRegion(video,Math.floor((w-rw)/2),Math.floor((h-rh)/2),rw,rh,1.35,true);}
-    if(found?.data){qrConsecutiveFailures=0;registerQrEvidence(String(found.data).trim());}else{qrConsecutiveFailures++;await recoveryKameraJikaPerlu();}
-  }finally{qrDecodeBusy=false;}
-}
-function decodeJsQrRegion(video,sx,sy,sw,sh,scale,enhance){const width=Math.max(1,Math.floor(sw*scale)),height=Math.max(1,Math.floor(sh*scale));qrCanvas.width=width;qrCanvas.height=height;qrCtx.drawImage(video,sx,sy,sw,sh,0,0,width,height);const image=qrCtx.getImageData(0,0,width,height);if(enhance)enhanceImageData(image);return window.jsQR(image.data,width,height,{inversionAttempts:'attemptBoth'});}
-function enhanceImageData(image){const data=image.data;let min=255,max=0;for(let i=0;i<data.length;i+=4){const y=Math.round(.299*data[i]+.587*data[i+1]+.114*data[i+2]);if(y<min)min=y;if(y>max)max=y;}const range=Math.max(1,max-min);for(let i=0;i<data.length;i+=4)for(let c=0;c<3;c++)data[i+c]=Math.max(0,Math.min(255,Math.round((data[i+c]-min)*255/range)));}
-function registerQrEvidence(text){if(!text)return;const now=Date.now();bersihkanCacheQr();const current=qrEvidence.get(text);if(!current||now-current.lastAt>QR_EVIDENCE_WINDOW){qrEvidence.set(text,{count:1,firstAt:now,lastAt:now});return;}current.count++;current.lastAt=now;if(current.count>=QR_MIN_EVIDENCE){qrEvidence.delete(text);onScanSuccess(text);}}
-async function recoveryKameraJikaPerlu(){if(!cameraTrack||qrConsecutiveFailures<8)return;const now=Date.now();if(now-qrLastRecoveryAt<1500)return;qrLastRecoveryAt=now;try{const cap=cameraTrack.getCapabilities?.()||{};const advanced=[];if(Array.isArray(cap.focusMode)&&cap.focusMode.includes('continuous'))advanced.push({focusMode:'continuous'});if(advanced.length)await cameraTrack.applyConstraints({advanced});}catch(e){console.log('Recovery kamera dilewati:',e);}qrConsecutiveFailures=0;}
-async function optimalkanKamera(){
-  if(!cameraTrack)return;const capabilities=cameraTrack.getCapabilities?.()||{},settings=cameraTrack.getSettings?.()||{};
-  if(capabilities.focusMode){const modes=Array.isArray(capabilities.focusMode)?capabilities.focusMode:[];try{if(modes.includes('continuous'))await cameraTrack.applyConstraints({advanced:[{focusMode:'continuous'}]});else if(modes.includes('single-shot'))await cameraTrack.applyConstraints({advanced:[{focusMode:'single-shot'}]});}catch(e){console.log('Autofocus tidak dapat diterapkan:',e);}}
-  if(capabilities.zoom){const min=Number(capabilities.zoom.min),max=Number(capabilities.zoom.max),step=Number(capabilities.zoom.step)||.1;if(Number.isFinite(min)&&Number.isFinite(max)&&max>min){const current=Number(settings.zoom);lastZoom=Number.isFinite(current)?current:min;await applyZoom(clamp(lastZoom,min,Math.min(max,min+Math.max(step*2,(max-min)*.12))));clearInterval(autoZoomTimer);autoZoomTimer=setInterval(async()=>{if(!scanner||!cameraTrack){clearInterval(autoZoomTimer);autoZoomTimer=null;return;}if(sedangProses||Date.now()-scanStartedAt<3000)return;const increment=Math.max(step,(max-min)*.06),next=Math.min(max,Number(lastZoom)+increment);if(next>Number(lastZoom)+.0001)await applyZoom(next);else{clearInterval(autoZoomTimer);autoZoomTimer=null;}},2000);}}
-}
-async function applyZoom(value){if(!cameraTrack?.getCapabilities)return;const cap=cameraTrack.getCapabilities();if(!cap.zoom)return;const min=Number(cap.zoom.min),max=Number(cap.zoom.max),step=Number(cap.zoom.step)||.1;let zoom=clamp(Number(value),min,max);if(step>0){zoom=min+Math.round((zoom-min)/step)*step;zoom=clamp(zoom,min,max);}try{await cameraTrack.applyConstraints({advanced:[{zoom}]});lastZoom=zoom;}catch(e){console.log('Auto zoom tidak dapat diterapkan:',e);}}
-function clamp(value,min,max){return Math.min(Math.max(value,min),max);}
+  }
+});
 
 /* =====================================================
-   ABSENSI DIRECT FIREBASE
-   Hanya point-read guru + point-read attendance hari ini.
-   Tidak pernah membaca parent attendance/history.
+   INISIALISASI FIREBASE
+   Menunggu Firebase module selesai dieksekusi.
    ===================================================== */
-function hitungJarakMeter(lat1,lng1,lat2,lng2){const R=6371000,toRad=x=>x*Math.PI/180,dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1);const a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
-async function bacaGuru(idGuru){const guru=await fbGet(`${TEACHERS_PATH}/${fbKey(idGuru)}`);if(!guru)throw new Error('Guru dengan ID '+idGuru+' tidak ditemukan.');return guru;}
-async function bacaAbsensiHariIni(idGuru){return fbGet(`${ATTENDANCE_PATH}/${fbKey(attendanceKey(idGuru))}`);}
+function tungguFirebaseSDK(timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const mulai = Date.now();
 
-async function simpanAbsensiFirebase(idGuru,statusAbsensi,latitude,longitude,guru,jarak){
-  const {ref,runTransaction,db}=firebaseApi;
-  const key=fbKey(attendanceKey(idGuru));
-  const path=`${ATTENDANCE_PATH}/${key}`;
-  const tanggal=todayWIB();
-  const jam=timeWIB();
-  const result=await runTransaction(ref(db,path),current=>{
-    const old=current && typeof current==='object' ? current : null;
-    if(statusAbsensi==='MASUK'){
-      if(old?.jamMasuk) return;
-      return {
-        ...(old||{}), tanggal, idGuru, nama:String(guru.nama||''), jabatan:String(guru.jabatan||''), mataPelajaran:String(guru.mataPelajaran||''),
-        jamMasuk:jam, jamPulang:old?.jamPulang||'', latitude, longitude, jarakMeter:Math.round(jarak), kunciAbsensi:`${tanggal}|${idGuru}`
-      };
-    }
-    if(!old) return;
-    if(old.jamPulang) return;
-    return {...old,jamPulang:jam,jamPulangLatitude:latitude,jamPulangLongitude:longitude,jamPulangJarakMeter:Math.round(jarak)};
+    const cek = () => {
+      if (window.FirebaseDirect) {
+        resolve(window.FirebaseDirect);
+        return;
+      }
+
+      if (Date.now() - mulai >= timeoutMs) {
+        reject(new Error('Firebase SDK tidak selesai dimuat.'));
+        return;
+      }
+
+      setTimeout(cek, 50);
+    };
+
+    cek();
   });
-  if(!result.committed) {
-    const latest=result.snapshot.exists()?result.snapshot.val():null;
-    if(statusAbsensi==='MASUK'&&latest?.jamMasuk)return {success:false,message:`${guru.nama||idGuru} sudah melakukan absensi MASUK pada ${latest.jamMasuk}.`,guru,status:'MASUK',jam:latest.jamMasuk,jarak:latest.jarakMeter};
-    if(statusAbsensi==='PULANG'&&!latest)return {success:false,message:`${guru.nama||idGuru} belum melakukan absensi MASUK.`,guru,status:'PULANG'};
-    if(statusAbsensi==='PULANG'&&latest?.jamPulang)return {success:false,message:`${guru.nama||idGuru} sudah melakukan absensi PULANG pada ${latest.jamPulang}.`,guru,status:'PULANG',jam:latest.jamPulang,jarak:latest.jamPulangJarakMeter||latest.jarakMeter};
-    return {success:false,message:'Absensi tidak dapat diproses karena status berubah. Silakan scan ulang.',guru};
+}
+
+(async function initFirebaseTerminal() {
+  try {
+    const Firebase = await tungguFirebaseSDK();
+
+    firebaseApp = Firebase.initializeApp(FIREBASE_CONFIG);
+    firebaseAuth = Firebase.getAuth(firebaseApp);
+    firebaseDb = Firebase.getDatabase(firebaseApp);
+
+    await Firebase.setPersistence(
+      firebaseAuth,
+      Firebase.browserLocalPersistence
+    );
+
+    Firebase.onAuthStateChanged(firebaseAuth, async user => {
+      if (!user) {
+        currentUser = null;
+        terminalProfile = null;
+        tampilkanAuthPanel();
+        showStatus(
+          'Terminal belum terhubung. Aktivasi cukup dilakukan satu kali pada browser ini.',
+          'info'
+        );
+        return;
+      }
+
+      try {
+        currentUser = user;
+        await loadTerminalProfile();
+        tampilkanAplikasiUtama();
+        await loadPesanHarian();
+        showStatus(
+          'Terminal terhubung. Scanner siap digunakan.',
+          'info'
+        );
+      } catch (error) {
+        console.error('Profil terminal tidak valid:', error);
+        currentUser = null;
+        terminalProfile = null;
+        tampilkanAuthPanel();
+        showStatus(
+          error.message || 'Profil terminal belum aktif.',
+          'error'
+        );
+      }
+    });
+  } catch (error) {
+    console.error('Inisialisasi Firebase gagal:', error);
+    tampilkanAuthPanel();
+    showStatus(
+      'Firebase belum dapat diinisialisasi: ' + (error.message || error),
+      'error'
+    );
   }
-  return {success:true,message:statusAbsensi==='MASUK'?`${guru.nama||idGuru} berhasil absen MASUK.`:`${guru.nama||idGuru} berhasil absen PULANG.`,guru,status:statusAbsensi,jam,jarak:Math.round(jarak)};
-}
-
-async function prosesAbsensiDariQR(idGuru,statusAbsensi){
-  if(!navigator.geolocation)return {success:false,message:'Perangkat tidak mendukung GPS.'};
-  if(!firebaseApi?.auth?.currentUser)return {success:false,message:'Sesi Firebase perangkat belum aktif.'};
-  try{
-    showStatus('QR '+idGuru+' tervalidasi. Mengambil lokasi GPS...','info');
-    const position=await ambilLokasiGPS();
-    const lat=position.coords.latitude,lng=position.coords.longitude;
-    const jarak=hitungJarakMeter(SCHOOL_LAT,SCHOOL_LNG,lat,lng);
-    if(jarak>RADIUS_MAKSIMUM)return {success:false,message:'Absensi ditolak. Anda berada '+Math.round(jarak)+' meter dari sekolah. Radius maksimum adalah '+RADIUS_MAKSIMUM+' meter.',jarak:Math.round(jarak)};
-    const guru=await bacaGuru(idGuru);
-    const existing=await bacaAbsensiHariIni(idGuru);
-    if(statusAbsensi==='MASUK'&&existing?.jamMasuk)return {success:false,message:`${guru.nama||idGuru} sudah melakukan absensi MASUK pada ${existing.jamMasuk}.`,guru,status:'MASUK',jam:existing.jamMasuk,jarak:existing.jarakMeter};
-    if(statusAbsensi==='PULANG'&&!existing)return {success:false,message:`${guru.nama||idGuru} belum melakukan absensi MASUK.`,guru,status:'PULANG'};
-    if(statusAbsensi==='PULANG'&&existing?.jamPulang)return {success:false,message:`${guru.nama||idGuru} sudah melakukan absensi PULANG pada ${existing.jamPulang}.`,guru,status:'PULANG',jam:existing.jamPulang,jarak:existing.jamPulangJarakMeter||existing.jarakMeter};
-    return await simpanAbsensiFirebase(idGuru,statusAbsensi,lat,lng,guru,jarak);
-  }catch(e){console.error(e);return {success:false,message:'Gagal memproses absensi: '+fbError(e)};}
-}
-function ambilLokasiGPS(){return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,timeout:10000,maximumAge:5000}));}
-
-async function onScanSuccess(decodedText){
-  const idGuru=String(decodedText||'').trim();if(!idGuru)return;bersihkanCacheQr();if(recentQrSuccess.has(idGuru)||sedangProses)return;sedangProses=true;const statusAbsensi=mode;showStatus('QR terbaca. Memproses absensi...','info');
-  try{const result=await prosesAbsensiDariQR(idGuru,statusAbsensi);if(result?.success)recentQrSuccess.set(idGuru,Date.now());if(result?.success){const nama=result.guru?.nama||idGuru,jarak=Number.isFinite(Number(result.jarak))?result.jarak:'-';showStatus('ABSENSI BERHASIL\n'+result.message+'\nNama: '+nama+'\nStatus: '+result.status+'\nJam: '+result.jam+'\nJarak: '+jarak+' meter','success');bicara('Absensi '+String(result.status).toLowerCase()+' berhasil untuk '+nama+'.');}else{showStatus(result?.message||'Absensi ditolak.','error');bicara(result?.message||'Absensi ditolak.');}}catch(e){showStatus('Gagal memproses absensi: '+fbError(e),'error');}finally{sedangProses=false;}}
-
-async function bersihkanScanner(){clearInterval(autoZoomTimer);autoZoomTimer=null;qrScanRunning=false;qrDecodeBusy=false;qrEvidence.clear();const activeStream=cameraStream;scanner=null;try{activeStream?.getTracks().forEach(t=>{try{t.stop();}catch(_){}});}finally{cameraTrack=null;cameraStream=null;const reader=document.getElementById('reader');if(reader)reader.innerHTML='';qrCanvas=null;qrCtx=null;}}
-
-function bicara(teks){if(!('speechSynthesis'in window))return false;try{const isi=String(teks||'').trim();if(!isi)return false;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(isi);u.lang='id-ID';u.rate=1;u.pitch=1;u.volume=1;window.speechSynthesis.speak(u);ttsUnlocked=true;return true;}catch(e){return false;}}
-function bukaKunciTTS(){if(!('speechSynthesis'in window))return;try{window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance('Scanner absensi guru aktif.');u.lang='id-ID';u.volume=1;window.speechSynthesis.speak(u);ttsUnlocked=true;}catch(e){}}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&'speechSynthesis'in window){try{window.speechSynthesis.resume();}catch(_){}}});
-
-(async function boot(){
-  try{
-    showStatus('Menghubungkan ke Firebase...','info');
-    const authenticated=await bootstrapAuth();
-    if(authenticated){showStatus('Firebase terhubung. Siap untuk scanner.','success');loadPesanHarian();}
-  }catch(e){console.error(e);showStatus('Firebase gagal terhubung: '+fbError(e),'error');showActivation(true,'Periksa koneksi internet dan konfigurasi Firebase.');}
 })();
+
+/* =====================================================
+   MULAI
+   ===================================================== */
+
 </script>
 
 </body>
