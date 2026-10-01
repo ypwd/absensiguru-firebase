@@ -320,7 +320,7 @@ const SCHOOL_ID = 'SMKWD';
 const APP_ID = 'absensi_guru';
 const SCHOOL_LAT = -6.926620085970337;
 const SCHOOL_LNG = 107.56729467121897;
-const RADIUS_MAKSIMUM = 150000;
+const RADIUS_MAKSIMUM = 150;
 const WIB_TIMEZONE = 'Asia/Jakarta';
 
 let firebaseApp = null;
@@ -1059,12 +1059,14 @@ async function kirimAbsensi(
   longitude,
   statusAbsensi
 ) {
+  let safeIdGuru = String(idGuru).trim();
+  let attendanceKey = '';
   try {
     await ensureFirebaseReady();
 
     // 1) Point-read master guru saja. Tidak membaca seluruh teachers.
     // Firebase path keys normally do not contain '/', so use the raw ID when safe.
-    const safeIdGuru = String(idGuru).trim();
+    safeIdGuru = String(idGuru).trim();
     const directTeacherRef = FirebaseDirect.ref(
       firebaseDb,
       `schools/${SCHOOL_ID}/shared/teachers/${safeIdGuru}`
@@ -1088,7 +1090,7 @@ async function kirimAbsensi(
 
     // 3) Point-read + transaction hanya pada record hari ini untuk guru tersebut.
     //    Tidak pernah membaca parent attendance/history.
-    const attendanceKey = `${tanggal}_${safeIdGuru}`;
+    attendanceKey = `${tanggal}_${safeIdGuru}`;
     const attendanceRef = FirebaseDirect.ref(
       firebaseDb,
       `schools/${SCHOOL_ID}/apps/${APP_ID}/attendance/${attendanceKey}`
@@ -1119,6 +1121,41 @@ async function kirimAbsensi(
       jarak: Math.round(jarak)
     });
 
+    // Untuk PULANG, lakukan pembacaan server terlebih dahulu. Ini penting
+    // ketika cache lokal belum memiliki record: callback transaksi pertama
+    // dapat menerima null walaupun record sudah tersimpan di server.
+    let dataAwalPulang = null;
+    if (statusAbsensi === 'PULANG') {
+      const awalSnap = await FirebaseDirect.get(attendanceRef);
+      dataAwalPulang = awalSnap.exists() ? awalSnap.val() : null;
+      console.log('[ABSENSI DIAG] Data sebelum transaksi PULANG:', dataAwalPulang);
+
+      if (!dataAwalPulang || typeof dataAwalPulang !== 'object') {
+        return {
+          success: false,
+          message: 'Belum ada data MASUK untuk guru ini hari ini.',
+          guru
+        };
+      }
+      if (!dataAwalPulang.jamMasuk) {
+        return {
+          success: false,
+          message: 'Data MASUK ditemukan, tetapi jamMasuk belum terisi.',
+          guru
+        };
+      }
+      if (dataAwalPulang.jamPulang) {
+        return {
+          success: false,
+          message: `Guru sudah melakukan PULANG pada ${dataAwalPulang.jamPulang}.`,
+          guru,
+          status: 'PULANG',
+          jam: dataAwalPulang.jamPulang,
+          jarak: dataAwalPulang.jarakMeterPulang
+        };
+      }
+    }
+
     const transactionResult = await FirebaseDirect.runTransaction(
       attendanceRef,
       current => {
@@ -1146,23 +1183,28 @@ async function kirimAbsensi(
         }
 
         if (statusAbsensi === 'PULANG') {
-          // Hanya update record MASUK hari ini untuk guru yang sama.
-          // Transaction tetap dipakai agar dua scan PULANG bersamaan tidak
-          // dapat menulis dua kali.
-          if (!current || typeof current !== 'object') {
+          // Gunakan hasil point-read sebagai fallback hanya saat callback
+          // transaksi pertama menerima null akibat cache belum terisi.
+          // Jika Firebase melakukan retry, current dari server tetap menjadi
+          // sumber utama dan seluruh validasi dijalankan ulang.
+          const record = (current && typeof current === 'object')
+            ? current
+            : dataAwalPulang;
+          console.log('[ABSENSI DIAG] Record yang divalidasi untuk PULANG:', record);
+          if (!record || typeof record !== 'object') {
             return;
           }
 
-          if (!current.jamMasuk) {
+          if (!record.jamMasuk) {
             return;
           }
 
-          if (current.jamPulang) {
+          if (record.jamPulang) {
             return;
           }
 
           return {
-            ...current,
+            ...record,
             jamPulang: jamSekarang,
             latitudePulang: latitude,
             longitudePulang: longitude,
